@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "460482601352",
+    "project_id": "blogapp-448d9",
+    "storage_bucket": "blogapp-448d9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:460482601352:android:8395395ba279ceb57cda3d",
+        "android_client_info": {
+          "package_name": "com.santosenoque.firebase_course"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDE10rjZ5mBC1P6_UBkkO9Pa3BZ5ihwf9I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
