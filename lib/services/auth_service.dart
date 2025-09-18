@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/user_model.dart';
 
 class AuthService {
@@ -25,7 +26,7 @@ class AuthService {
 
   // Create user with email and password
   Future<UserCredential> createUserWithEmailAndPassword(
-      String email, String password, String displayName) async {
+      String email, String password, String displayName, {String role = 'User'}) async {
     try {
       UserCredential result = await _auth.createUserWithEmailAndPassword(
           email: email, password: password);
@@ -33,13 +34,33 @@ class AuthService {
       // Update display name
       await result.user?.updateDisplayName(displayName);
 
-      // Create user profile in database
+      // Create user profile in Realtime Database
       await _createUserProfile(result.user!, displayName, email);
+
+      // Save role to Firestore
+      await FirebaseFirestore.instance.collection('users').doc(result.user!.uid).set({
+        'uid': result.user!.uid,
+        'email': email,
+        'displayName': displayName,
+        'role': (role == 'Admin') ? 'Admin' : 'User',
+        'createdAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      // Mirror role to Realtime Database for security rules
+      await _database.ref('users/${result.user!.uid}/role').set((role == 'Admin') ? 'Admin' : 'User');
 
       return result;
     } catch (e) {
       throw _handleAuthError(e);
     }
+  }
+
+  // Merge helper for Firestore user doc
+  Future<void> mergeUserFirestore(String uid, Map<String, dynamic> data) async {
+    await FirebaseFirestore.instance
+        .collection('users')
+        .doc(uid)
+        .set(data, SetOptions(merge: true));
   }
 
   // Create user profile in database
@@ -94,6 +115,46 @@ class AuthService {
       print('Error updating user profile: $e');
       rethrow;
     }
+  }
+
+  // Read role from Firestore
+  Future<String?> getUserRole(String uid) async {
+    try {
+      final doc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      if (doc.exists) {
+        final data = doc.data();
+        return data != null ? (data['role'] as String?) : null;
+      }
+      return null;
+    } catch (e) {
+      print('Error fetching user role (Firestore): $e');
+      return null;
+    }
+  }
+
+  // Read role from Realtime Database
+  Future<String?> getUserRoleFromRealtime(String uid) async {
+    try {
+      final snap = await _database.ref('users/$uid/role').get();
+      if (snap.exists) {
+        final val = snap.value;
+        return val is String ? val : null;
+      }
+      return null;
+    } catch (e) {
+      print('Error fetching user role (RTDB): $e');
+      return null;
+    }
+  }
+
+  Future<bool> isCurrentUserAdmin() async {
+    final uid = currentUser?.uid;
+    if (uid == null) return false;
+    // Try Firestore first
+    String? role = await getUserRole(uid);
+    // Fallback to RTDB if Firestore blocked
+    role ??= await getUserRoleFromRealtime(uid);
+    return role == 'Admin';
   }
 
   // Handle authentication errors

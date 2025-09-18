@@ -5,6 +5,7 @@ import '../db/post_service.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_course/services/auth_service.dart';
 
 class PostView extends StatefulWidget {
   final Post post;
@@ -20,6 +21,7 @@ class _PostViewState extends State<PostView> {
   final TextEditingController _commentController = TextEditingController();
   final FocusNode _commentFocusNode = FocusNode();
   bool _showCommentBox = false;
+  bool _isAdmin = false;
 
   @override
   void initState() {
@@ -29,6 +31,16 @@ class _PostViewState extends State<PostView> {
       // Delay focus to after first frame
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _commentFocusNode.requestFocus();
+      });
+    }
+    _loadRole();
+  }
+
+  Future<void> _loadRole() async {
+    final isAdmin = await AuthService().isCurrentUserAdmin();
+    if (mounted) {
+      setState(() {
+        _isAdmin = isAdmin;
       });
     }
   }
@@ -41,9 +53,32 @@ class _PostViewState extends State<PostView> {
   }
   @override
   Widget build(BuildContext context) {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    final isOwner = currentUser?.uid == widget.post.userId;
+    final canManage = isOwner || _isAdmin;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.post.title),
+        actions: [
+          if (canManage) ...[
+            IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: () async {
+                if (widget.post.key != null) {
+                  await FirebaseDatabase.instance.ref('posts').child(widget.post.key!).remove();
+                  if (mounted) Navigator.pop(context);
+                }
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit),
+              onPressed: () {
+                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => EditPost(widget.post)));
+              },
+            ),
+          ],
+        ],
       ),
       body: Column(
         children: <Widget>[
@@ -57,17 +92,6 @@ class _PostViewState extends State<PostView> {
                     style: const TextStyle(fontSize: 14.0, color: Colors.grey),
                   ),
                 ),),
-              IconButton(icon: const Icon(Icons.delete),
-              onPressed: (){
-                PostService postService = PostService(widget.post.toMap());
-                postService.deletePost();
-                Navigator.pop(context);
-
-              },),
-              IconButton(icon: const Icon(Icons.edit),
-                onPressed: (){
-                  Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => EditPost(widget.post)));
-                },),
             ],
           ),
           const Divider(),

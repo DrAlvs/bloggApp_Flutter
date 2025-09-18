@@ -3,6 +3,8 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import 'package:firebase_course/models/post.dart';
+import 'package:firebase_course/models/user_model.dart';
+import 'package:firebase_course/services/auth_service.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -42,7 +44,8 @@ class ProfileScreen extends StatelessWidget {
                         ? NetworkImage(user!.photoURL!)
                         : null,
                     child: (user?.photoURL == null)
-                        ? const Icon(Icons.person, color: Colors.white, size: 32)
+                        ? const Icon(Icons.person,
+                            color: Colors.white, size: 32)
                         : null,
                   ),
                   const SizedBox(width: 16),
@@ -159,33 +162,180 @@ class _AccountSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-    return ListView(
-      children: [
-        const Text(
-          'Account',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
+    if (user == null) {
+      return const Center(child: Text('Not signed in'));
+    }
+
+    final DatabaseReference ref =
+        FirebaseDatabase.instance.ref('users/${user.uid}');
+
+    return StreamBuilder<DatabaseEvent>(
+      stream: ref.onValue,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        }
+
+        final data = snapshot.data?.snapshot.value;
+        final UserModel? profile = (data is Map)
+            ? UserModel.fromMap(Map<String, dynamic>.from(data as Map))
+            : null;
+
+        return ListView(
+          children: [
+            const Text(
+              'Account',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Show details on my profile'),
+              subtitle: const Text('Toggle visibility of school and address'),
+              secondary: const Icon(Icons.visibility_outlined),
+              value: profile?.showDetails ?? true,
+              onChanged: (val) async {
+                await AuthService().updateUserProfile(user.uid, {
+                  'showDetails': val,
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.person_outline),
+              title: const Text('Display Name'),
+              subtitle: Text(user.displayName ?? 'Not set'),
+              trailing: const Icon(Icons.edit),
+              onTap: () async {
+                await onEditDisplayName();
+              },
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.email_outlined),
+              title: const Text('Email'),
+              subtitle: Text(user.email ?? ''),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Profile Details',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.school_outlined),
+              title: const Text('School'),
+              subtitle: Text(profile?.school?.trim().isNotEmpty == true
+                  ? profile!.school!
+                  : 'Not set'),
+              trailing: const Icon(Icons.edit),
+              onTap: () async {
+                await _editField(context,
+                    title: 'Edit School',
+                    label: 'School',
+                    initialValue: profile?.school ?? '', onSave: (value) async {
+                  await AuthService().updateUserProfile(user.uid, {
+                    'school': value.trim(),
+                  });
+                });
+              },
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.home_outlined),
+              title: const Text('Address'),
+              subtitle: Text(profile?.address?.trim().isNotEmpty == true
+                  ? profile!.address!
+                  : 'Not set'),
+              trailing: const Icon(Icons.edit),
+              onTap: () async {
+                await _editField(context,
+                    title: 'Edit Address',
+                    label: 'Address',
+                    initialValue: profile?.address ?? '',
+                    onSave: (value) async {
+                  await AuthService().updateUserProfile(user.uid, {
+                    'address': value.trim(),
+                  });
+                });
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _editField(BuildContext context,
+      {required String title,
+      required String label,
+      required String initialValue,
+      required Future<void> Function(String value) onSave}) async {
+    final controller = TextEditingController(text: initialValue);
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: controller,
+            decoration: InputDecoration(
+              labelText: label,
+              border: const OutlineInputBorder(),
+            ),
+            validator: (v) {
+              if (v == null) return null;
+              if (v.trim().length > 200) return 'Too long';
+              return null;
+            },
           ),
         ),
-        const SizedBox(height: 12),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.person_outline),
-          title: const Text('Display Name'),
-          subtitle: Text(user?.displayName ?? 'Not set'),
-          trailing: const Icon(Icons.edit),
-          onTap: () async {
-            await onEditDisplayName();
-          },
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.email_outlined),
-          title: const Text('Email'),
-          subtitle: Text(user?.email ?? ''),
-        ),
-      ],
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              if (!formKey.currentState!.validate()) return;
+              try {
+                await onSave(controller.text);
+                // ignore: use_build_context_synchronously
+                Navigator.of(ctx).pop();
+                // ignore: use_build_context_synchronously
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Saved'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              } catch (e) {
+                // ignore: use_build_context_synchronously
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Error: $e'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -235,9 +385,10 @@ class _UserPostsList extends StatelessWidget {
             return ListTile(
               contentPadding: EdgeInsets.zero,
               leading: CircleAvatar(
-                backgroundImage: (post.userAvatar != null && post.userAvatar!.isNotEmpty)
-                    ? NetworkImage(post.userAvatar!)
-                    : null,
+                backgroundImage:
+                    (post.userAvatar != null && post.userAvatar!.isNotEmpty)
+                        ? NetworkImage(post.userAvatar!)
+                        : null,
                 child: (post.userAvatar == null || post.userAvatar!.isEmpty)
                     ? const Icon(Icons.person)
                     : null,
@@ -253,7 +404,9 @@ class _UserPostsList extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    timeago.format(DateTime.fromMillisecondsSinceEpoch(post.date), allowFromNow: true),
+                    timeago.format(
+                        DateTime.fromMillisecondsSinceEpoch(post.date),
+                        allowFromNow: true),
                     style: const TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                 ],
@@ -271,5 +424,3 @@ class _UserPostsList extends StatelessWidget {
     );
   }
 }
-
-

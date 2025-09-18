@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import 'home.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -21,6 +25,8 @@ class _RegisterScreenState extends State<RegisterScreen>
   bool _isLoading = false;
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
+  String _selectedRole = 'User';
+  File? _avatarFile;
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
   late Animation<Offset> _slideAnimation;
@@ -55,22 +61,58 @@ class _RegisterScreenState extends State<RegisterScreen>
     super.dispose();
   }
 
+  Future<void> _pickAvatar() async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 75);
+    if (picked != null) {
+      setState(() => _avatarFile = File(picked.path));
+    }
+  }
+
+  Future<String?> _uploadAvatar(String uid) async {
+    if (_avatarFile == null) return null;
+    final ref = FirebaseStorage.instance.ref().child('avatars').child('$uid.jpg');
+    await ref.putFile(_avatarFile!);
+    return await ref.getDownloadURL();
+  }
+
   Future<void> _signUp() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isLoading = true);
 
     try {
-      await _authService.createUserWithEmailAndPassword(
+      final userCred = await _authService.createUserWithEmailAndPassword(
         _emailController.text.trim(),
         _passwordController.text,
         _displayNameController.text.trim(),
+        role: _selectedRole,
       );
 
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const HomePage()),
-      );
+      final user = userCred.user;
+      if (user != null) {
+        String? photoUrl;
+        if (_avatarFile != null) {
+          photoUrl = await _uploadAvatar(user.uid);
+        }
+        if (photoUrl != null && photoUrl.isNotEmpty) {
+          await user.updatePhotoURL(photoUrl);
+          await user.reload();
+          await _authService.updateUserProfile(user.uid, {
+            'photoURL': photoUrl,
+          });
+          await _authService.mergeUserFirestore(user.uid, {
+            'photoURL': photoUrl,
+          });
+        }
+      }
+
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomePage()),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -108,13 +150,45 @@ class _RegisterScreenState extends State<RegisterScreen>
                 children: [
                   const SizedBox(height: 20),
 
-                  // Logo and Title
-                  const Icon(
-                    Icons.flutter_dash,
-                    size: 80,
-                    color: Colors.blue,
+                  // Avatar picker
+                  Center(
+                    child: Stack(
+                      children: [
+                        CircleAvatar(
+                          radius: 48,
+                          backgroundColor: Colors.blue,
+                          backgroundImage: _avatarFile != null ? FileImage(_avatarFile!) : null,
+                          child: _avatarFile == null
+                              ? const Icon(Icons.person, color: Colors.white, size: 48)
+                              : null,
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: InkWell(
+                            onTap: _pickAvatar,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(20),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.1),
+                                    blurRadius: 4,
+                                  ),
+                                ],
+                              ),
+                              padding: const EdgeInsets.all(6),
+                              child: const Icon(Icons.edit, color: Colors.blue),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 16),
+
+                  // Title
                   const Text(
                     'Create Account',
                     style: TextStyle(
@@ -133,7 +207,7 @@ class _RegisterScreenState extends State<RegisterScreen>
                     ),
                     textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 24),
 
                   // Registration Page
                   Form(
@@ -206,11 +280,13 @@ class _RegisterScreenState extends State<RegisterScreen>
                             fillColor: Colors.grey.shade50,
                           ),
                           validator: (value) {
-                            if (value == null || value.isEmpty) {
+                            final email = value?.trim() ?? '';
+                            if (email.isEmpty) {
                               return 'Please enter your email';
                             }
-                            if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
-                                .hasMatch(value)) {
+                            final pattern =
+                                r'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$';
+                            if (!RegExp(pattern).hasMatch(email)) {
                               return 'Please enter a valid email';
                             }
                             return null;
@@ -314,6 +390,43 @@ class _RegisterScreenState extends State<RegisterScreen>
                             }
                             if (value != _passwordController.text) {
                               return 'Passwords do not match';
+                            }
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 20),
+
+                        // Role Dropdown
+                        DropdownButtonFormField<String>(
+                          value: _selectedRole,
+                          items: const [
+                            DropdownMenuItem(value: 'User', child: Text('User')),
+                            DropdownMenuItem(value: 'Admin', child: Text('Admin')),
+                          ],
+                          onChanged: (val) {
+                            if (val != null) setState(() => _selectedRole = val);
+                          },
+                          decoration: InputDecoration(
+                            labelText: 'Role',
+                            prefixIcon: const Icon(Icons.verified_user_outlined, color: Colors.grey),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: Colors.grey.shade300),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: Colors.grey.shade300),
+                            ),
+                            focusedBorder: const OutlineInputBorder(
+                              borderRadius: BorderRadius.all(Radius.circular(12)),
+                              borderSide: BorderSide(color: Colors.blue, width: 2),
+                            ),
+                            filled: true,
+                            fillColor: Colors.grey.shade50,
+                          ),
+                          validator: (value) {
+                            if (value == null || value.isEmpty) {
+                              return 'Please select a role';
                             }
                             return null;
                           },

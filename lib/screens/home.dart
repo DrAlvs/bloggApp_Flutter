@@ -9,6 +9,7 @@ import 'package:firebase_course/screens/login_screen.dart';
 import 'package:firebase_course/screens/profile_screen.dart';
 import 'package:timeago/timeago.dart' as timeago;
 import 'dart:async';
+import 'package:firebase_course/services/auth_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -21,6 +22,8 @@ class _HomePageState extends State<HomePage> {
   final FirebaseDatabase _database = FirebaseDatabase.instance;
   String nodeName = "posts";
   List<Post> postsList = <Post>[];
+  final AuthService _authService = AuthService();
+  bool _isAdmin = false;
 
   // Stream subscriptions
   StreamSubscription<DatabaseEvent>? _childAddedSubscription;
@@ -36,6 +39,20 @@ class _HomePageState extends State<HomePage> {
         _database.ref(nodeName).onChildRemoved.listen(_childRemoves);
     _childChangedSubscription =
         _database.ref(nodeName).onChildChanged.listen(_childChanged);
+
+    // Fetch role once on init
+    _loadRole();
+  }
+
+  Future<void> _loadRole() async {
+    try {
+      final isAdmin = await _authService.isCurrentUserAdmin();
+      if (mounted) {
+        setState(() {
+          _isAdmin = isAdmin;
+        });
+      }
+    } catch (_) {}
   }
 
   @override
@@ -251,6 +268,7 @@ class _HomePageState extends State<HomePage> {
     // Get current user
     final currentUser = FirebaseAuth.instance.currentUser;
     final isPostCreator = currentUser?.uid == post.userId;
+    final canManage = isPostCreator || _isAdmin;
 
     return SlideTransition(
       position: Tween<Offset>(
@@ -316,15 +334,14 @@ class _HomePageState extends State<HomePage> {
                       ],
                     ),
                   ),
-                  // Only show edit/delete menu if user is the post creator
-                  if (isPostCreator)
+                  // Show edit/delete for owner or admin
+                  if (canManage)
                     PopupMenuButton<String>(
                       icon: const Icon(Icons.more_horiz, color: Colors.grey),
                       onSelected: (value) {
                         if (value == 'delete') {
                           _showDeleteDialog(post);
                         } else if (value == 'edit') {
-                          // Edit functionality
                           _showEditDialog(post);
                         }
                       },
